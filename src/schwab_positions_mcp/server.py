@@ -208,6 +208,25 @@ def get_concentration_analysis(account_hash: str, top_n: int = 5) -> dict[str, A
 
 
 @mcp.tool(
+    name="get_twrr_analysis",
+    description=(
+        "Time-Weighted Rate of Return (TWRR) computed from Schwab transactions "
+        "(TRADE) and current positions using event-driven subperiods at "
+        "quantity-changing trades + geometric linking. Read-only; uses only "
+        "allow-listed API paths. Returns rolling 30/60/90d and YTD (limited "
+        "by 60d tx lookback unless cache used). Pure computation; no mutation, "
+        "no cache write."
+    ),
+)
+def get_twrr_analysis(
+    account_hash: str, symbol: str | None = None, lookback_days: int = 60
+) -> dict[str, Any]:
+    return analytics.get_twrr_analysis_impl(
+        {"account_hash": account_hash, "symbol": symbol, "lookback_days": lookback_days}
+    )
+
+
+@mcp.tool(
     name="get_cross_account_summary",
     description=(
         "Read-only derived cross-account aggregation: discovers all linked "

@@ -322,19 +322,17 @@ class TestB4ServerInfoListsAccountNumbers:
             "B4 regression — get_server_info must list get_account_numbers now that it is registered as an MCP tool."
         )
 
-    def test_b4_tool_count_is_fourteen(self) -> None:
+    def test_b4_tool_count_is_fifteen(self) -> None:
         info = meta.get_server_info_impl()
-        assert len(info["tools"]) == 14, (
-            "Tool-count regression — server_info should report exactly 14 tools "
-            "after v0.4.0 (5 portfolio + 1 account_numbers + 3 read-only detail "
-            "[user_preferences/order_detail/transaction_detail] + 3 analytics + 2 meta)."
+        assert len(info["tools"]) == 15, (
+            "Tool-count regression — server_info should report 15 tools including get_twrr_analysis."
         )
 
     def test_b4_readme_advertises_fourteen_tools(self) -> None:
         """README.md (English) must reflect the 14-tool surface."""
         repo_root = Path(__file__).resolve().parent.parent
         readme = (repo_root / "README.md").read_text(encoding="utf-8")
-        assert "Tools (14)" in readme
+        assert "Tools (15)" in readme
         assert "get_account_numbers" in readme
 
     def test_b4_readme_zh_advertises_fourteen_tools(self) -> None:
@@ -344,5 +342,5 @@ class TestB4ServerInfoListsAccountNumbers:
         if not path.exists():
             pytest.skip("README_zh.md absent")
         body = path.read_text(encoding="utf-8")
-        assert "工具列表（14 个）" in body or "14 个）" in body  # noqa: RUF001 (matching README_zh literal)
+        assert "工具列表（15 个）" in body or "15 个）" in body  # noqa: RUF001 (matching README_zh literal)
         assert "get_account_numbers" in body

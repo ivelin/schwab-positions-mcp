@@ -22,7 +22,7 @@ which exposes Schwab Market Data Production endpoints. The two repos are
 deliberately split so the trading-account credential set lives in its own
 process and config directory.
 
-## Tools (14)
+## Tools (15)
 
 ### Account / portfolio (9)
 

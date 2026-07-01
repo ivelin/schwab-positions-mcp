@@ -27,9 +27,10 @@ def _resp(status: int = 200, payload: Any = None) -> MagicMock:
 
 
 class TestServerToolSurface:
-    def test_fourteen_tools_registered(self) -> None:
+    def test_fifteen_tools_registered(self) -> None:
         info = meta.get_server_info_impl()
-        assert len(info["tools"]) == 14
+        assert len(info["tools"]) == 15
+        assert "get_twrr_analysis" in info["tools"]
 
     def test_server_module_has_all_tool_callables(self) -> None:
         for name in (

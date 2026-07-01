@@ -84,6 +84,7 @@ def get_server_info_impl(_payload: dict[str, Any] | None = None) -> dict[str, An
             "get_account_summary",
             "get_pnl_analysis",
             "get_concentration_analysis",
+            "get_twrr_analysis",
             "get_cross_account_summary",
             "health_check",
             "get_server_info",

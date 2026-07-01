@@ -13,6 +13,7 @@ real network and no cache writes.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -649,3 +650,73 @@ class TestAnalyticsReadOnlyBoundary:
         src = Path(analytics.__file__).read_text(encoding="utf-8")
         for kw in ("place_" + "order", "cancel_" + "order", "replace_" + "order"):
             assert kw not in src, f"analytics.py contains forbidden mutation keyword {kw!r}"
+
+
+# ---------------------------------------------------------------------------
+# get_twrr_analysis (ported TWRR using Schwab tx/pos shapes)
+# ---------------------------------------------------------------------------
+
+
+class TestGetTwrrAnalysis:
+    def test_returns_numeric_twrr_on_multi_trade_data(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+    ) -> None:
+        """TWRR tool must produce non-null metrics on representative multi-trade Schwab-shaped data."""
+        # current pos for AAPL
+        pos_payload = _positions_payload(
+            [
+                {
+                    "instrument": {"symbol": "AAPL", "assetType": "EQUITY"},
+                    "longQuantity": 20.0,
+                    "averagePrice": 150.0,
+                    "marketValue": 3500.0,
+                }
+            ]
+        )
+        mock_schwab_client.get_account.return_value = _resp(200, pos_payload)
+
+        # 2 TRADE buys for AAPL (net negative = capital in), within window
+        today = date.today()
+        txs = [
+            {
+                "transactionId": "TX_A1",
+                "tradeDate": (today - timedelta(days=25)).isoformat(),
+                "type": "TRADE",
+                "instrument": {"symbol": "AAPL"},
+                "amount": 1500.0,
+                "netAmount": -1500.0,
+                "currency": "USD",
+            },
+            {
+                "transactionId": "TX_A2",
+                "tradeDate": (today - timedelta(days=10)).isoformat(),
+                "type": "TRADE",
+                "instrument": {"symbol": "AAPL"},
+                "amount": 1500.0,
+                "netAmount": -1500.0,
+                "currency": "USD",
+            },
+        ]
+        mock_schwab_client.get_transactions.return_value = _resp(200, txs)
+
+        out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL", "lookback_days": 60})
+        assert out["ok"] is True
+        assert out["symbol"] == "AAPL"
+        # with ~2 subperiods (2 trades), should have linked hpr >0 (capital 3000, mv 3500)
+        assert out["twrr_30d"] is not None and out["twrr_30d"] > 0
+        assert out["subperiod_count"] >= 1
+        assert out["data_quality"] >= 30
+
+    def test_handles_insufficient_data(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+    ) -> None:
+        mock_schwab_client.get_account.return_value = _resp(200, _positions_payload([]))
+        mock_schwab_client.get_transactions.return_value = _resp(200, [])
+        out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "FOO"})
+        assert out["ok"] is True
+        assert out["twrr_30d"] is None  # insufficient trades
+        assert out["subperiod_count"] == 0
