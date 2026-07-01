@@ -69,22 +69,14 @@ def build_subperiods(
     prev_date = "inception"
 
     for i, ev in enumerate(events):
-        # start_mv for this sub = cf at this event (standard: CF at start of sub)
-        start_mv = ev.cash_flow if i == 0 else prev_mv + ev.cash_flow  # adjust for chained
-        # better: for simplicity, start_mv for sub i is the mv before this event, but to match port:
-        # use mv_at for end, start from prev end
-
-        # To match standard port logic: use the mv_at as end for this sub
         mv_at = ev.quantity * ev.price
         if i == 0:
-            start_mv = ev.cash_flow  # capital after this cf
+            # First sub: capital at risk starts as the external CF (inflow) at this event
+            start_mv = ev.cash_flow
         else:
             start_mv = prev_mv
-
         end_mv = mv_at
-
         hpr = (end_mv / start_mv - 1.0) if start_mv > 0 else 0.0
-
         subperiods.append(TradeSubPeriod(
             symbol=symbol,
             start_date=prev_date if prev_date != "inception" else ev.event_date,

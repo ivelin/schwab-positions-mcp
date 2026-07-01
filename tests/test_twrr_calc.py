@@ -134,3 +134,41 @@ def test_compute_inception_branch():
     ]
     res = compute_linked_twrr(subs, "2025-01-01", "2026-02-01")
     assert res == pytest.approx(0.2, abs=0.02)  # links the two real
+
+
+def test_terminal_append_oracle_and_multi_trade_nonnull():
+    """Oracle: 2 trade events + different final_mv produces terminal append + linked non-None.
+    Hand computed: sub0 hpr=0.05 (1000->1050), sub1 hpr=0.047619 (1050->1100), terminal hpr ~0.0909 (1100->1200)
+    linked = (1.05 * 1.047619 * 1.0909) - 1 ≈ 0.20
+    """
+    events = [
+        TradeEvent("2026-06-01", 1000.0, 10, 105.0),
+        TradeEvent("2026-06-10", 1000.0, 10, 110.0),
+    ]
+    subs = build_subperiods(events, "AAPL", 1200.0, "2026-06-20")
+    assert len(subs) == 3  # 2 event subs + terminal
+    # event subs use their mv, terminal brings final
+    assert subs[0].hpr == pytest.approx(0.05)
+    assert subs[1].hpr == pytest.approx(0.047619, abs=1e-5)
+    assert subs[2].start_market_value == 1100.0
+    assert subs[2].end_market_value == 1200.0
+    linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
+    assert linked is not None
+    assert linked == pytest.approx(0.20, abs=0.01)
+
+
+def test_schwab_multi_trade_via_normalise_and_link():
+    """Full path using normalise on Schwab-shaped tx (q/p present) + current pos, then build+link non-null."""
+    txs = [
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1050.0, "quantity": 10, "price": 105.0, "tradeDate": "2026-06-01"},
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1100.0, "quantity": 10, "price": 110.0, "tradeDate": "2026-06-10"},
+    ]
+    pos = {"averagePrice": 150.0, "marketValue": 1200.0}
+    events = normalise_schwab_trades(txs, "AAPL", pos)
+    assert len(events) == 2
+    subs = build_subperiods(events, "AAPL", 1200.0, "2026-06-20")
+    linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
+    assert linked is not None
+    assert linked > 0 or linked == pytest.approx(0.0, abs=0.01)  # in this data may be near 0 until terminal brings value
+    # but terminal ensures at least the append sub
+    assert len(subs) >= 2
