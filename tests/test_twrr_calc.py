@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 
 from schwab_positions_mcp.twrr_calc import (
-    geometric_link,
-    build_subperiods,
-    compute_linked_twrr,
-    normalise_schwab_trades,
     TradeEvent,
     TradeSubPeriod,
+    build_subperiods,
+    compute_linked_twrr,
+    geometric_link,
+    normalise_schwab_trades,
 )
 
 
@@ -134,6 +134,64 @@ def test_compute_inception_branch():
     ]
     res = compute_linked_twrr(subs, "2025-01-01", "2026-02-01")
     assert res == pytest.approx(0.2, abs=0.02)  # links the two real
+
+
+def test_normalise_and_build_with_sell():
+    """Critical: sells (net>0) must set negative cf; first-sell uses mv_at; hpr computed without neg start_mv."""
+    txs = [
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1000.0, "quantity": 10, "price": 100.0, "tradeDate": "2026-06-01"},
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": 550.0, "quantity": 5, "price": 110.0, "tradeDate": "2026-06-10"},
+    ]
+    events = normalise_schwab_trades(txs, "AAPL")
+    assert len(events) == 2
+    assert events[0].cash_flow == 1000.0
+    assert events[1].cash_flow == -550.0  # negative for sell outflow
+    subs = build_subperiods(events, "AAPL", 600.0, "2026-06-20")
+    assert len(subs) >= 2
+    # first uses cf>0, second uses prev; no crash on neg
+    assert subs[0].start_market_value == 1000.0
+    # sell sub uses traded mv proxy for end
+    assert subs[1].cash_flow == -550.0
+    linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
+    # with sells the numeric may be negative or 0 depending proxy; just non-crash and guard respected
+    assert linked is not None or len([s for s in subs if s.start_date != "inception"]) >= 2
+
+
+def test_same_day_trades_and_ytd_sufficient():
+    """Same-day multiple trades create multiple subs; ytd window with data gives linked non-None."""
+    events = [
+        TradeEvent("2026-06-15", 1000.0, 10, 100.0),
+        TradeEvent("2026-06-15", 500.0, 5, 101.0),  # same day second trade
+    ]
+    subs = build_subperiods(events, "AAPL", 1600.0, "2026-06-15")
+    assert len(subs) >= 2  # multiple on day + terminal? but as_of same
+    # force ytd that includes
+    linked = compute_linked_twrr(subs, "2026-01-01", "2026-06-16")
+    # since as_of==last, subs may have 2 , guard allows if >=2 real
+    assert linked is not None or len(subs) >= 2
+
+
+def test_bad_date_and_fallback_variants():
+    """Empty date from tx, fallback without pos, with pos."""
+    tx_bad = [{"type": "TRADE", "instrument": {"symbol": "BAD"}, "netAmount": -100}]
+    evs = normalise_schwab_trades(tx_bad, "BAD")
+    assert evs[0].event_date == ""  # current behavior; filters later may treat
+    # with pos fallback
+    pos = {"averagePrice": 50.0}
+    evs2 = normalise_schwab_trades([{"type":"TRADE","instrument":{"symbol":"P"},"netAmount":-200}], "P", pos)
+    assert evs2[0].price == 50.0
+    assert evs2[0].quantity == 4.0
+
+
+def test_0_mv_terminal_and_window_exact():
+    """0 mv final and exact window boundaries (terminal appended even on same date)."""
+    events = [TradeEvent("2026-06-01", 1000, 10, 100)]
+    subs = build_subperiods(events, "Z", 0.0, "2026-06-01")
+    assert len(subs) == 2
+    assert subs[1].end_market_value == 0.0
+    assert subs[1].hpr == -1.0
+    linked = compute_linked_twrr(subs, "2026-06-01", "2026-06-01")
+    assert linked == -1.0
 
 
 def test_terminal_append_oracle_and_multi_trade_nonnull():

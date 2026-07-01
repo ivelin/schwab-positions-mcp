@@ -750,7 +750,8 @@ class TestGetTwrrAnalysis:
         mock_schwab_client: MagicMock,
     ) -> None:
         """Valid call with symbol=None hits else branch + use_symbol filter."""
-        from datetime import date as _d, timedelta as _td
+        from datetime import date as _d
+        from datetime import timedelta as _td
         today = _d.today()
         pos_payload = _positions_payload([
             {"instrument": {"symbol": "MSFT"}, "longQuantity": 5, "averagePrice": 200, "marketValue": 1100}
@@ -775,3 +776,26 @@ class TestGetTwrrAnalysis:
         mock_schwab_client.get_account.return_value = err
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL"})
         assert out["ok"] is False
+
+
+    def test_sell_tx_cf_and_numeric(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+    ) -> None:
+        """Sell (positive net) sets negative cf; impl produces output (may None or num depending data)."""
+        today = date.today()
+        pos_payload = _positions_payload([
+            {"instrument": {"symbol": "AAPL"}, "longQuantity": 5, "averagePrice": 100, "marketValue": 550}
+        ])
+        mock_schwab_client.get_account.return_value = _resp(200, pos_payload)
+        txs = [
+            {"transactionId": "B", "tradeDate": (today - timedelta(days=20)).isoformat(), "type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1000.0, "quantity": 10, "price": 100.0},
+            {"transactionId": "S", "tradeDate": (today - timedelta(days=5)).isoformat(), "type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": 550.0, "quantity": 5, "price": 110.0},
+        ]
+        mock_schwab_client.get_transactions.return_value = _resp(200, txs)
+        out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL", "lookback_days": 60})
+        assert out["ok"] is True
+        assert out["subperiod_count"] >= 1  # at least from events + terminal
+        # cf sign exercised in pure, here just no crash
+

@@ -45,6 +45,15 @@ from ..models import (
     GetPnlAnalysisInput,
     GetTwrrAnalysisInput,
 )
+
+# pure TWRR (placed top-level to satisfy lint)
+from ..twrr_calc import (
+    build_subperiods as build_trade_driven_subperiods_schwab,
+)
+from ..twrr_calc import (
+    compute_linked_twrr,
+    normalise_schwab_trades,
+)
 from ._common import SchwabApiError, get_client, normalise_response
 
 
@@ -451,17 +460,6 @@ def get_cross_account_summary_impl(_payload: dict[str, Any] | None = None) -> di
 def _extract_symbol(tx: dict[str, Any]) -> str:
     instr = tx.get("instrument") or {}
     return instr.get("symbol") or tx.get("symbol") or ""
-
-
-# re-exports for compat (old names in some tests); pure funcs live in twrr_calc.py
-from ..twrr_calc import (
-    build_subperiods as build_trade_driven_subperiods_schwab,
-    compute_linked_twrr,
-    compute_linked_twrr as _linked_twrr,
-    geometric_link,
-    normalise_schwab_trades,
-)  # noqa: F401,E402,F811
-from ..twrr_calc import TradeSubPeriod  # noqa: F401
 
 
 def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:

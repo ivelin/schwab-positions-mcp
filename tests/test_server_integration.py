@@ -209,7 +209,8 @@ class TestServerToolSurface:
         mock_schwab_client: MagicMock,
     ) -> None:
         """Exercise server wrapper for TWRR + multi-sub data (hits server body + impl)."""
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
+        from datetime import timedelta as _td
         today = _date.today()
         pos_payload = {
             "securitiesAccount": {
@@ -252,6 +253,7 @@ class TestServerToolSurface:
         assert out["symbol"] == "AAPL"
         # numeric non-zero expected on multi tx path
         assert out.get("twrr_30d") is not None
+        assert "twrr_90d" in out and "twrr_ytd" in out and "subperiod_count" in out
 
 
 class TestMainFunctionGuarded:

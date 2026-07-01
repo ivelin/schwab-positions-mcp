@@ -14,8 +14,8 @@ No reuse of final MV for intermediate subs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Any, List, Optional
+from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -38,7 +38,7 @@ class TradeSubPeriod:
     hpr: float
 
 
-def geometric_link(returns: List[float]) -> float:
+def geometric_link(returns: list[float]) -> float:
     """Geometric linking of period returns."""
     if not returns:
         return 0.0
@@ -49,11 +49,11 @@ def geometric_link(returns: List[float]) -> float:
 
 
 def build_subperiods(
-    events: List[TradeEvent],
+    events: list[TradeEvent],
     symbol: str,
     final_mv: float,
-    as_of_date: Optional[str] = None,
-) -> List[TradeSubPeriod]:
+    as_of_date: str | None = None,
+) -> list[TradeSubPeriod]:
     """
     Build subperiods from events.
 
@@ -64,17 +64,13 @@ def build_subperiods(
     if not events:
         return []
 
-    subperiods: List[TradeSubPeriod] = []
+    subperiods: list[TradeSubPeriod] = []
     prev_mv = 0.0
     prev_date = "inception"
 
     for i, ev in enumerate(events):
         mv_at = ev.quantity * ev.price
-        if i == 0:
-            # First sub: capital at risk starts as the external CF (inflow) at this event
-            start_mv = ev.cash_flow
-        else:
-            start_mv = prev_mv
+        start_mv = (ev.cash_flow if ev.cash_flow > 0 else mv_at) if i == 0 else prev_mv
         end_mv = mv_at
         hpr = (end_mv / start_mv - 1.0) if start_mv > 0 else 0.0
         subperiods.append(TradeSubPeriod(
@@ -109,10 +105,10 @@ def build_subperiods(
 
 
 def compute_linked_twrr(
-    subperiods: List[TradeSubPeriod],
+    subperiods: list[TradeSubPeriod],
     from_date: str,
     to_date: str,
-) -> Optional[float]:
+) -> float | None:
     """Select overlapping, link geometrically."""
     if not subperiods:
         return None
@@ -134,13 +130,13 @@ def compute_linked_twrr(
     return geometric_link(returns)
 
 
-__all__ = ["geometric_link", "build_subperiods", "compute_linked_twrr", "normalise_schwab_trades", "TradeEvent", "TradeSubPeriod"]
+__all__ = ["TradeEvent", "TradeSubPeriod", "build_subperiods", "compute_linked_twrr", "geometric_link", "normalise_schwab_trades"]
 
 
 def normalise_schwab_trades(
     transactions: list[dict[str, Any]],
     symbol: str,
-    current_position: Optional[dict[str, Any]] = None,
+    current_position: dict[str, Any] | None = None,
 ) -> list[TradeEvent]:
     """
     Map Schwab tx to TradeEvent list.
@@ -155,17 +151,13 @@ def normalise_schwab_trades(
             continue
         d = (t.get("tradeDate") or t.get("time") or "")[:10]
         net = _safe_float(t.get("netAmount"))
-        cf = -net if net < 0 else 0.0  # capital into position for buy
+        cf = -net  # + for buy (net<0 inflow to pos), - for sell (net>0 outflow from pos)
         q = _safe_float(t.get("quantity"))
         p = _safe_float(t.get("price"))
         if q <= 0 or p <= 0:
             # derive approx: use |net| / some price, fallback to pos avg or 1
-            if current_position:
-                p = _safe_float(current_position.get("averagePrice")) or 1.0
-            else:
-                p = 1.0
+            p = _safe_float(current_position.get("averagePrice")) or 1.0 if current_position else 1.0
             q = abs(net) / p if p > 0 else 0.0
-        mv = q * p
         events.append(TradeEvent(event_date=d, cash_flow=cf, quantity=q, price=p))
     return events
 

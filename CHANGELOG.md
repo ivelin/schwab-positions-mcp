@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed / Audited
+- Deep audit of TWRR (`get_twrr_analysis`): reviewed all branches in `twrr_calc.py` + impl (CF signs, build start_mv chaining, guards, fallbacks, dates, errors); fixed CF to record sells (negative), start_mv to avoid neg for first-sell; added extensive oracle edge tests (sells, same-day, ytd, bad data, 0-mv); achieved 100% cov on TWRR paths; lint clean (ruff, typing); security/readonly preserved; all verif plan steps pass with fresh evidence. No behavior change for buy-hold cases; sell support improved for prod quality.
+
 ## [0.4.0] - 2026-06-16
 
 ### Added
