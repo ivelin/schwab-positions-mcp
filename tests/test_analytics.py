@@ -704,9 +704,9 @@ class TestGetTwrrAnalysis:
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL", "lookback_days": 60})
         assert out["ok"] is True
         assert out["symbol"] == "AAPL"
-        # now uses accumulated total MV at trade prices (e.g. ~1500 to final 3500 in terminal leg) => ~16.7%
-        assert out["twrr_30d"] is not None and out["twrr_30d"] > 0
-        assert out["subperiod_count"] >= 1
+        # accumulated total at fallback p=150: 1500->1500->3000 post, terminal 3000->3500 => 16.67
+        assert out["twrr_30d"] == pytest.approx(16.67)
+        assert out["subperiod_count"] >= 2
         assert out["data_quality"] >= 30
 
     def test_handles_insufficient_data(
@@ -719,6 +719,26 @@ class TestGetTwrrAnalysis:
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "FOO"})
         assert out["ok"] is True
         assert out["twrr_30d"] is None  # insufficient trades
+        assert out["subperiod_count"] == 0
+
+    def test_symbol_none_on_empty_hits_falsy_use_symbol(
+        self, installed_client: Any, mock_schwab_client: MagicMock
+    ) -> None:
+        """Hits else branch + use_symbol=None (falsy) so the filter if is not taken."""
+        mock_schwab_client.get_account.return_value = _resp(200, _positions_payload([]))
+        mock_schwab_client.get_transactions.return_value = _resp(200, [])
+        out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": None})
+        assert out["ok"] is True
+        assert out["twrr_30d"] is None
+
+    def test_symbol_given_no_match_in_populated_positions(self, installed_client: Any, mock_schwab_client: MagicMock):
+        """Hits if-symbol branch but inner if never true (no match), exercising false arm."""
+        pos_payload = _positions_payload([{"instrument":{"symbol":"MSFT"}, "longQuantity":1, "averagePrice":10, "marketValue":10}])
+        mock_schwab_client.get_account.return_value = _resp(200, pos_payload)
+        mock_schwab_client.get_transactions.return_value = _resp(200, [])
+        out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "NOPE"})
+        assert out["ok"] is True
+        assert out["twrr_30d"] is None
         assert out["subperiod_count"] == 0
 
     def test_invalid_input_returns_error(
@@ -796,6 +816,9 @@ class TestGetTwrrAnalysis:
         mock_schwab_client.get_transactions.return_value = _resp(200, txs)
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL", "lookback_days": 60})
         assert out["ok"] is True
-        assert out["subperiod_count"] >= 1  # at least from events + terminal
-        # cf sign exercised in pure, here just no crash
+        assert out["subperiod_count"] >= 2
+        # sell case: using accumulation, sell sub hpr should be +0.1 (price rise on whole holding), not negative
+        # (exact hpr computed in pure twrr_calc; here we assert positive non-zero for the linked return after sell)
+        assert out.get("twrr_30d") == pytest.approx(10.0)
+        assert out["data_quality"] >= 30
 

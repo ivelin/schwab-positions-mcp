@@ -137,26 +137,30 @@ def test_compute_inception_branch():
     assert res == pytest.approx(0.2, abs=0.02)  # links the two real
 
 
-def test_normalise_and_build_with_sell():
-    """Critical: sells set negative cf; pre-flow MV uses full pre_q * p (captures +10% on whole before outflow)."""
-    txs = [
-        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1000.0, "quantity": 10, "price": 100.0, "tradeDate": "2026-06-01"},
-        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": 550.0, "quantity": 5, "price": 110.0, "tradeDate": "2026-06-10"},
+def test_inception_filter_both_arms():
+    """Cover both sides of inception <= to_date in compute (with/without append)."""
+    subs = [
+        TradeSubPeriod("S", "inception", "2026-04-01", 0, 1000, 0, 0.0),
+        TradeSubPeriod("S", "2026-01-20", "2026-02-01", 1000, 1100, 0, 0.1),
+        TradeSubPeriod("S", "2026-02-01", "2026-03-01", 1100, 1200, 0, 0.0909),
     ]
-    events = normalise_schwab_trades(txs, "AAPL")
-    assert len(events) == 2
-    assert events[0].cash_flow == 1000.0
-    assert events[1].cash_flow == -550.0
-    subs = build_subperiods(events, "AAPL", 600.0, "2026-06-20")
+    # window that includes reals (start<=to, end>=from) but inception end > to : skips inception (false)
+    res = compute_linked_twrr(subs, "2026-01-01", "2026-03-15")
+    assert res is not None
+    # wide window: includes inception (true arm)
+    res2 = compute_linked_twrr(subs, "2025-01-01", "2026-05-01")
+    assert res2 is not None
+
+
+def test_normalise_and_build_with_sell():
+    """Critical: sells set negative cf; pre-flow MV uses full pre_q * p."""
+    from tests.twrr_oracles import get_oracle
+    o = get_oracle("buy_sell")
+    subs = build_subperiods(o.events, "TEST", o.final_mv, o.as_of, initial_quantity=o.initial_quantity)
     assert len(subs) >= 3
-    assert subs[0].hpr == pytest.approx(0.0)
-    # sell sub: end_pre=10*110=1100 , hpr on prior capital =0.1 (correct, not -0.45)
-    assert subs[1].end_market_value == pytest.approx(1100.0)
     assert subs[1].hpr == pytest.approx(0.1)
-    assert subs[1].cash_flow == -550.0
     linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
-    assert linked is not None
-    assert linked > 0.0  # positive from price rise on held capital
+    assert linked == pytest.approx(o.expected_linked, abs=0.001)
 
 
 def test_same_day_trades_and_ytd_sufficient():
@@ -169,8 +173,8 @@ def test_same_day_trades_and_ytd_sufficient():
     assert len(subs) >= 2  # multiple on day + terminal? but as_of same
     # force ytd that includes
     linked = compute_linked_twrr(subs, "2026-01-01", "2026-06-16")
-    # since as_of==last, subs may have 2 , guard allows if >=2 real
-    assert linked is not None or len(subs) >= 2
+    assert linked is not None
+    assert len(subs) >= 2
 
 
 def test_bad_date_and_fallback_variants():
@@ -183,6 +187,25 @@ def test_bad_date_and_fallback_variants():
     evs2 = normalise_schwab_trades([{"type":"TRADE","instrument":{"symbol":"P"},"netAmount":-200}], "P", pos)
     assert evs2[0].price == 50.0
     assert evs2[0].quantity == 4.0
+
+
+def test_first_event_hpr_zero_and_cf_zero_path():
+    """First-event always produces hpr=0 using q*p; cf=0 when netAmount missing treated as inflow (correct buy path, non-zero if final differs)."""
+    # buy with full data
+    evs = normalise_schwab_trades([{"type":"TRADE","instrument":{"symbol":"F"},"netAmount":-1050,"quantity":10,"price":105,"tradeDate":"2026-06-01"}], "F")
+    subs = build_subperiods(evs, "F", 1050, "2026-06-01")
+    assert subs[0].hpr == 0.0
+    # tx missing netAmount (cf falls to 0) - should be treated as buy, start_mv = q*p
+    evs2 = normalise_schwab_trades([{"type":"TRADE","instrument":{"symbol":"M"},"quantity":3,"price":50,"tradeDate":"2026-06-01"}], "M")
+    assert evs2[0].cash_flow == 0.0
+    assert evs2[0].quantity == 3.0
+    # build+link numeric: with cf=0 but positive q, should use as inflow, hpr=0 at event, terminal from 150->200 say positive
+    subs2 = build_subperiods(evs2, "M", 200.0, "2026-06-02")  # final > event mv=150
+    assert len(subs2) >= 2
+    assert subs2[0].hpr == 0.0
+    assert subs2[0].start_market_value == 150.0
+    linked2 = compute_linked_twrr(subs2, "2026-05-01", "2026-06-03")
+    assert linked2 is not None and linked2 > 0.0  # terminal provides positive return on the 'bought' capital
 
 
 def test_0_mv_terminal_and_window_exact():
@@ -228,6 +251,17 @@ def test_schwab_multi_trade_via_normalise_and_link():
     assert len(events) == 2
     subs = build_subperiods(events, "AAPL", 2200.0, "2026-06-20")
     linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
-    # With accumulation, events hpr=0 (p same), terminal 0 (same mv); linked may 0 or small. Guard + total MV path exercised.
+    # accumulation; second event gives ~0.0476 , terminal 0 (same p) => linked ~0.0476
     assert len(subs) >= 2
-    assert linked is not None or True  # may be 0.0 when no price move between or to final; correctness in MV accumulation not hpr value here
+    assert linked == pytest.approx(0.047619, abs=0.001)
+
+
+def test_sell_only_with_initial_anchor():
+    """Sell-only first event with initial_quantity >0 produces sensible non-neg linked (uses pre-window qty)."""
+    from tests.twrr_oracles import get_oracle
+    o = get_oracle("sell_only_initial")
+    subs = build_subperiods(o.events, "TEST", o.final_mv, o.as_of, initial_quantity=o.initial_quantity)
+    assert len(subs) >= 2
+    assert subs[0].hpr == pytest.approx(0.0)
+    linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-21")
+    assert linked == pytest.approx(o.expected_linked, abs=0.001)

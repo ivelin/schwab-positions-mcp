@@ -53,6 +53,7 @@ def build_subperiods(
     symbol: str,
     final_mv: float,
     as_of_date: str | None = None,
+    initial_quantity: float = 0.0,
 ) -> list[TradeSubPeriod]:
     """
     Build subperiods from events.
@@ -64,26 +65,42 @@ def build_subperiods(
     if not events:
         return []
 
+    # Ensure chronological order - critical for correct subperiod chaining and HPRs
+    events = sorted(events, key=lambda e: e.event_date)
+
     subperiods: list[TradeSubPeriod] = []
     prev_mv = 0.0
     prev_date = "inception"
-    running_q = 0.0
+    running_q = initial_quantity
+
+    # Emit inception sub for real pre-window holdings (when initial_quantity >0)
+    # This allows compute_linked_twrr's inception filter to be exercised on real paths.
+    if initial_quantity > 0 and events:
+        first_ev = events[0]
+        init_mv = initial_quantity * first_ev.price
+        subperiods.append(TradeSubPeriod(
+            symbol=symbol,
+            start_date="inception",
+            end_date=first_ev.event_date,
+            start_market_value=0.0,
+            end_market_value=round(init_mv, 2),
+            cash_flow=0.0,
+            hpr=0.0,
+        ))
+        prev_mv = init_mv
+        prev_date = first_ev.event_date
 
     for i, ev in enumerate(events):
         q = ev.quantity
         p = ev.price
         cf = ev.cash_flow
-        is_inflow = cf > 0
+        is_inflow = cf >= 0  # cf==0 (missing netAmount) treated as buy/inflow to avoid wrong negative delta
         delta_q = q if is_inflow else -q
         pre_q = running_q
-        if i == 0:
-            if is_inflow:
-                start_mv = q * p
-                end_mv = q * p
-            else:
-                # first sell on pre-window holding: proxy using traded value
-                start_mv = q * p
-                end_mv = q * p
+        if i == 0 and initial_quantity == 0:
+            # first event and no pre-window initial: use traded value for this sub's capital
+            start_mv = q * p
+            end_mv = q * p
         else:
             start_mv = prev_mv
             end_mv = pre_q * p  # pre-flow position value at this event's price
@@ -105,7 +122,7 @@ def build_subperiods(
     if as_of_date is None:
         as_of_date = datetime.now().date().isoformat()
     for last in (subperiods[-1:] if subperiods else []):
-        last_mv = prev_mv
+        last_mv = prev_mv if prev_mv > 0 else 0.0
         hpr = (final_mv / last_mv - 1.0) if last_mv > 0 else 0.0
         subperiods.append(TradeSubPeriod(
             symbol=symbol,
@@ -131,7 +148,7 @@ def compute_linked_twrr(
     relevant = []
     for sp in subperiods:
         if sp.start_date == "inception":
-            if sp.end_date <= to_date:  # pragma: no branch - exercised in dedicated inception test
+            if sp.end_date <= to_date:
                 relevant.append(sp)
             continue
         if sp.end_date >= from_date and sp.start_date <= to_date:

@@ -483,7 +483,7 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
     if symbol:
         target_pos = None
         for p in positions:
-            if _extract_symbol(p) == symbol or (p.get("instrument") or {}).get("symbol") == symbol:  # pragma: no branch
+            if _extract_symbol(p) == symbol or (p.get("instrument") or {}).get("symbol") == symbol:
                 target_pos = p
                 break
         use_symbol = symbol
@@ -512,14 +512,18 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
             "_cache_status": "skipped:error",
         }
 
-    if use_symbol:  # pragma: no branch
+    if use_symbol:
         txs = [t for t in txs if (t.get("instrument") or {}).get("symbol") == use_symbol]
 
     final_mv = _safe_float(target_pos.get("marketValue")) if target_pos else 0.0
     as_of = today.isoformat()
 
     events = normalise_schwab_trades(txs, use_symbol or "", target_pos)
-    subs = build_trade_driven_subperiods_schwab(events, use_symbol or "ALL", final_mv, as_of)
+    final_qty = _position_quantity(target_pos) if target_pos else 0.0
+    # Back out window-start qty from final using signed deltas from *normalised* events (handles fallback q).
+    net_delta = sum( (e.quantity if e.cash_flow > 0 else -e.quantity) for e in events )
+    initial_qty = final_qty - net_delta
+    subs = build_trade_driven_subperiods_schwab(events, use_symbol or "ALL", final_mv, as_of, initial_quantity=initial_qty)
 
     twrr_30 = compute_linked_twrr(subs, (today - timedelta(days=30)).isoformat(), as_of)
     twrr_60 = compute_linked_twrr(subs, (today - timedelta(days=60)).isoformat(), as_of)

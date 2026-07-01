@@ -9,6 +9,8 @@ keep out of CI.
 
 from __future__ import annotations
 
+import pytest
+
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -251,8 +253,9 @@ class TestServerToolSurface:
         )
         assert out["ok"] is True
         assert out["symbol"] == "AAPL"
-        # numeric non-zero expected on multi tx path
+        # With fixed accumulation: events at 1500/1500 (same p), terminal from 3000->3500 => ~16.67
         assert out.get("twrr_30d") is not None
+        assert out["twrr_30d"] == pytest.approx(16.67)  # exact for this mock data under accumulation
         assert "twrr_90d" in out and "twrr_ytd" in out and "subperiod_count" in out
 
 
