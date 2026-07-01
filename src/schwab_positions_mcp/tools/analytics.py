@@ -512,8 +512,8 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
             "_cache_status": "skipped:error",
         }
 
-    if use_symbol:
-        txs = [t for t in txs if (t.get("instrument") or {}).get("symbol") == use_symbol]  # pragma: no cover
+    if use_symbol:  # pragma: no branch
+        txs = [t for t in txs if (t.get("instrument") or {}).get("symbol") == use_symbol]
 
     final_mv = _safe_float(target_pos.get("marketValue")) if target_pos else 0.0
     as_of = today.isoformat()

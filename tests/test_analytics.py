@@ -704,7 +704,7 @@ class TestGetTwrrAnalysis:
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": "AAPL", "lookback_days": 60})
         assert out["ok"] is True
         assert out["symbol"] == "AAPL"
-        # with ~2 subperiods (2 trades), should have linked hpr >0 (capital 3000, mv 3500)
+        # now uses accumulated total MV at trade prices (e.g. ~1500 to final 3500 in terminal leg) => ~16.7%
         assert out["twrr_30d"] is not None and out["twrr_30d"] > 0
         assert out["subperiod_count"] >= 1
         assert out["data_quality"] >= 30
@@ -764,8 +764,8 @@ class TestGetTwrrAnalysis:
         mock_schwab_client.get_transactions.return_value = _resp(200, txs)
         out = analytics.get_twrr_analysis_impl({"account_hash": VALID_HASH, "symbol": None})
         assert out["ok"] is True
-        # symbol resolved from pos
-        assert out.get("symbol") in ("MSFT", None) or True  # may be 'MSFT'
+        assert out.get("symbol") == "MSFT"
+        assert "twrr_30d" in out and "subperiod_count" in out
 
     def test_fetch_account_error_path_for_twrr(
         self, installed_client: Any, mock_schwab_client: MagicMock

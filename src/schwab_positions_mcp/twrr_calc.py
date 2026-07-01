@@ -67,11 +67,26 @@ def build_subperiods(
     subperiods: list[TradeSubPeriod] = []
     prev_mv = 0.0
     prev_date = "inception"
+    running_q = 0.0
 
     for i, ev in enumerate(events):
-        mv_at = ev.quantity * ev.price
-        start_mv = (ev.cash_flow if ev.cash_flow > 0 else mv_at) if i == 0 else prev_mv
-        end_mv = mv_at
+        q = ev.quantity
+        p = ev.price
+        cf = ev.cash_flow
+        is_inflow = cf > 0
+        delta_q = q if is_inflow else -q
+        pre_q = running_q
+        if i == 0:
+            if is_inflow:
+                start_mv = q * p
+                end_mv = q * p
+            else:
+                # first sell on pre-window holding: proxy using traded value
+                start_mv = q * p
+                end_mv = q * p
+        else:
+            start_mv = prev_mv
+            end_mv = pre_q * p  # pre-flow position value at this event's price
         hpr = (end_mv / start_mv - 1.0) if start_mv > 0 else 0.0
         subperiods.append(TradeSubPeriod(
             symbol=symbol,
@@ -79,24 +94,25 @@ def build_subperiods(
             end_date=ev.event_date,
             start_market_value=round(start_mv, 2),
             end_market_value=round(end_mv, 2),
-            cash_flow=round(ev.cash_flow, 2),
+            cash_flow=round(cf, 2),
             hpr=round(hpr, 6),
         ))
-        prev_mv = end_mv
+        running_q += delta_q
+        prev_mv = (pre_q + delta_q) * p  # post-flow total valued at this p
         prev_date = ev.event_date
 
-    # append terminal closing leg from last to as_of with final_mv (hpr=0 if same date)
+    # always append terminal using actual final_mv from positions (full holding)
     if as_of_date is None:
         as_of_date = datetime.now().date().isoformat()
     for last in (subperiods[-1:] if subperiods else []):
-        last_mv = last.end_market_value
+        last_mv = prev_mv
         hpr = (final_mv / last_mv - 1.0) if last_mv > 0 else 0.0
         subperiods.append(TradeSubPeriod(
             symbol=symbol,
             start_date=last.end_date,
             end_date=as_of_date,
-            start_market_value=last_mv,
-            end_market_value=final_mv,
+            start_market_value=round(last_mv, 2),
+            end_market_value=round(final_mv, 2),
             cash_flow=0.0,
             hpr=round(hpr, 6),
         ))
