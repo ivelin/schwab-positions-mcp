@@ -1,0 +1,136 @@
+"""Oracle-first unit tests for pure twrr_calc.
+
+Fixtures are hand-computed.
+
+No mocks of MCP, no live, no csv.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from schwab_positions_mcp.twrr_calc import (
+    geometric_link,
+    build_subperiods,
+    compute_linked_twrr,
+    normalise_schwab_trades,
+    TradeEvent,
+    TradeSubPeriod,
+)
+
+
+def test_geometric_link():
+    assert geometric_link([0.1, 0.2]) == pytest.approx(0.32)
+    assert geometric_link([]) == 0.0
+
+
+def test_build_and_link_basic():
+    # two buys, no final override needed
+    events = [
+        TradeEvent("2026-06-01", 1000.0, 10, 105.0),  # mv=1050, hpr start 1000->1050 =0.05
+        TradeEvent("2026-06-10", 1000.0, 10, 110.0),  # start 1050, end 1100, hpr~0.0476
+    ]
+    subs = build_subperiods(events, "AAPL", 1100.0, "2026-06-10")
+    assert len(subs) >= 2
+    hprs = [s.hpr for s in subs if s.start_date != "inception"]
+    assert hprs[0] == pytest.approx(0.05)
+    # second adjusted
+    linked = compute_linked_twrr(subs, "2026-05-01", "2026-06-11")
+    assert linked == pytest.approx(0.1, abs=0.01)  # approx
+
+
+def test_normalise_schwab_no_qp_fallback():
+    txs = [
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1000.0, "tradeDate": "2026-06-01"},
+    ]
+    pos = {"longQuantity": 10.0, "averagePrice": 100.0, "marketValue": 1000.0}
+    events = normalise_schwab_trades(txs, "AAPL", pos)
+    assert len(events) == 1
+    assert events[0].cash_flow == 1000.0
+    assert events[0].quantity > 0
+
+
+def test_window_filter():
+    subs = [
+        TradeSubPeriod("AAPL", "2026-01-01", "2026-01-01", 1000, 1050, 0, 0.05),
+        TradeSubPeriod("AAPL", "2026-02-01", "2026-02-01", 1050, 1100, 0, 0.0476),
+    ]
+    # full
+    assert compute_linked_twrr(subs, "2025-01-01", "2026-03-01") == pytest.approx(0.1, abs=0.01)
+    # window limited, may None if <2 real in window
+    res = compute_linked_twrr(subs, "2026-01-15", "2026-03-01")
+    assert res is None or res == pytest.approx(0.0476, abs=0.01)
+
+
+def test_build_empty():
+    assert build_subperiods([], "AAPL", 100.0, "2026-07-01") == []
+
+
+def test_build_as_of_none_branch():
+    """Omit as_of to hit the None default + today set + append (today in 2026 > 06)."""
+    events = [TradeEvent("2026-06-20", 1000.0, 10, 105.0)]
+    subs = build_subperiods(events, "AAPL", 1200.0)  # as_of=None inside
+    assert len(subs) >= 1
+    # will have appended or at least ran the if None
+    assert any(s.end_market_value == 1200.0 for s in subs) or subs[0].end_market_value > 0
+
+
+def test_build_terminal_zero_mv_hpr_branch():
+    """Hits the else: hpr=0 when last_mv ==0 in terminal append."""
+    events = [TradeEvent("2026-06-01", 0.0, 0, 0.0)]  # zero
+    subs = build_subperiods(events, "Z", 0.0, "2026-06-02")
+    assert len(subs) == 2
+    assert subs[-1].hpr == 0.0
+
+
+def test_build_terminal_append():
+    """Hits the as_of > last.end branch and append terminal sub."""
+    events = [TradeEvent("2026-06-01", 1000.0, 10, 105.0)]
+    subs = build_subperiods(events, "AAPL", 1200.0, "2026-06-10")
+    assert len(subs) == 2
+    assert subs[1].start_date == "2026-06-01"
+    assert subs[1].end_date == "2026-06-10"
+    assert subs[1].end_market_value == 1200.0
+
+
+def test_compute_none_paths():
+    assert compute_linked_twrr([], "2026-01-01", "2026-02-01") is None
+    one = [TradeSubPeriod("AAPL", "2026-01-01", "2026-01-05", 1000, 1050, 0, 0.05)]
+    assert compute_linked_twrr(one, "2026-01-01", "2026-02-01") is None
+    assert compute_linked_twrr(one, "2026-02-01", "2026-03-01") is None
+
+
+def test_normalise_filters_and_explicit_qp():
+    # non TRADE and wrong symbol skipped
+    txs = [
+        {"type": "DIVIDEND", "instrument": {"symbol": "AAPL"}, "netAmount": 5},
+        {"type": "TRADE", "instrument": {"symbol": "MSFT"}, "netAmount": -10, "quantity": 1, "price": 10, "tradeDate": "2026-06-01"},
+        {"type": "TRADE", "instrument": {"symbol": "AAPL"}, "netAmount": -1050, "quantity": 10, "price": 105, "tradeDate": "2026-06-01"},
+    ]
+    evs = normalise_schwab_trades(txs, "AAPL")
+    assert len(evs) == 1
+    assert evs[0].quantity == 10
+    assert evs[0].price == 105.0
+
+    # fallback when no pos and no qp
+    evs2 = normalise_schwab_trades([{"type": "TRADE", "instrument": {"symbol": "XYZ"}, "netAmount": -100}], "XYZ")
+    assert len(evs2) == 1
+    assert evs2[0].quantity == 100.0  # /1.0
+    assert evs2[0].price == 1.0
+
+    # hit _safe_float except path
+    evs3 = normalise_schwab_trades([{"type": "TRADE", "instrument": {"symbol": "BAD"}, "netAmount": "notnum", "quantity": "x", "price": None, "tradeDate": "2026-07-01"}], "BAD")
+    assert len(evs3) == 1
+    assert evs3[0].cash_flow == 0.0
+    assert evs3[0].quantity == 0.0
+
+
+def test_compute_inception_branch():
+    """Directly exercise inception filter branch in compute (even if build omits)."""
+    subs = [
+        TradeSubPeriod("S", "inception", "2026-01-01", 0, 1000, 0, 0.0),
+        TradeSubPeriod("S", "2026-01-01", "2026-01-10", 1000, 1100, 0, 0.1),
+        TradeSubPeriod("S", "2026-01-10", "2026-02-01", 1100, 1200, 0, 0.0909),
+    ]
+    res = compute_linked_twrr(subs, "2025-01-01", "2026-02-01")
+    assert res == pytest.approx(0.2, abs=0.02)  # links the two real

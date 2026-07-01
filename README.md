@@ -38,12 +38,13 @@ process and config directory.
 | `get_transaction_detail` | Read one historical transaction's detail by `transaction_id`. Read-only — no money moves.            |
 | `get_account_summary`    | Compact aggregate: position count, total market value, total P&L, cash, buying power, balances.     |
 
-### Derived analytics (3, read-only — pure computation, no cache write)
+### Derived analytics (4, read-only — pure computation, no cache write)
 
 | Tool                          | Description                                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `get_pnl_analysis`            | Per-position cost basis / unrealized P&L / unrealized %, transaction-derived realized P&L, and a portfolio roll-up. **Cost-basis method: AVERAGE COST** (the positions feed exposes only `averagePrice`; no per-lot records for FIFO). |
 | `get_concentration_analysis`  | Top-N weights, Herfindahl-Hirschman Index (HHI), max single-position weight, and asset-type exposure. Sector exposure is `N/A` — the Schwab positions feed has no GICS sector field. |
+| `get_twrr_analysis`           | Time-Weighted Rate of Return (TWRR) from event-driven subperiods at trades using Schwab tx + positions (rolling 30/60/90d, YTD). |
 | `get_cross_account_summary`   | Fan out over `get_account_numbers` → `get_account` per account, then merge positions + balances into a combined view with per-account share-of-total and symbol-level de-duplication. |
 
 ### Meta (2)

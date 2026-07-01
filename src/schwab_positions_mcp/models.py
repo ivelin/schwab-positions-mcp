@@ -256,6 +256,19 @@ class GetPnlAnalysisInput(_StrictModel):
     )
 
 
+class GetTwrrAnalysisInput(_StrictModel):
+    """Input for ``get_twrr_analysis`` (TWRR from tx + positions)."""
+
+    account_hash: _AccountHashStr
+    symbol: str | None = Field(default=None, description="Optional symbol filter.")
+    lookback_days: int = Field(
+        default=_TRANSACTIONS_LOOKBACK_DAYS,
+        ge=1,
+        le=_TRANSACTIONS_LOOKBACK_DAYS,
+        description="Lookback window (capped at Schwab tx history limit).",
+    )
+
+
 class GetConcentrationAnalysisInput(_StrictModel):
     """Input for ``get_concentration_analysis`` (read-only derived analytics).
 

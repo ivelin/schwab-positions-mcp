@@ -277,6 +277,20 @@ class TestServerWrappers:
 
         assert run_calls == [{"transport": "stdio"}], "main must invoke mcp.run(transport='stdio') by default"
 
+    def test_main_defaults_to_sys_argv_when_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Calling main() with argv=None hits the sys.argv[1:] branch (line 266)."""
+        import schwab_positions_mcp.server as srv
+
+        run_calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(srv.mcp, "run", lambda **kwargs: run_calls.append(kwargs))
+        # force clean argv
+        monkeypatch.setattr("sys.argv", ["prog", "--http", "--port", "8123"])
+        try:
+            srv.main(None)
+            assert run_calls == [{"transport": "streamable-http"}]
+        finally:
+            pass
+
     def test_main_http_transport_configures_settings_and_runs_streamable_http(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

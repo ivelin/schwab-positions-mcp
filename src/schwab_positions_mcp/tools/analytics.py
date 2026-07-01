@@ -1,6 +1,6 @@
-"""Read-only derived portfolio analytics (v0.2.1).
+"""Read-only derived portfolio analytics.
 
-This module adds three **read-only, derived** tools that compute analytics on
+This module adds four **read-only, derived** tools that compute analytics on
 top of the data already returned by the existing read-only Schwab endpoints.
 They introduce **no** new mutation paths, **no** new cache writes, and call
 **only** the Layer-1 allow-listed read methods (``get_account``,
@@ -22,6 +22,9 @@ They introduce **no** new mutation paths, **no** new cache writes, and call
   GICS-sector field in the Schwab positions feed, so genuine sector exposure is
   reported as ``"N/A"`` and we surface ``assetType`` (EQUITY / OPTION / …) as a
   best-effort proxy bucket instead.
+- :func:`get_twrr_analysis_impl` — Time-Weighted Rate of Return (TWRR) computed
+  from event-driven subperiods at quantity-changing trades (using Schwab
+  transactions and positions data) with geometric linking for rolling periods.
 - :func:`get_cross_account_summary_impl` — fan out over
   ``get_account_numbers`` → ``get_account`` per account, then aggregate
   positions + balances into a merged view with per-account share-of-total and
@@ -40,6 +43,7 @@ from typing import Any
 from ..models import (
     GetConcentrationAnalysisInput,
     GetPnlAnalysisInput,
+    GetTwrrAnalysisInput,
 )
 from ._common import SchwabApiError, get_client, normalise_response
 
@@ -444,84 +448,20 @@ def get_cross_account_summary_impl(_payload: dict[str, Any] | None = None) -> di
 # ---------------------------------------------------------------------------
 
 
-def _safe_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def geometric_link(returns: list[float]) -> float:
-    """Geometric linking of period returns (ported from portfolio-analysis)."""
-    if not returns:
-        return 0.0
-    product = 1.0
-    for r in returns:
-        product *= 1.0 + float(r)
-    return product - 1.0
-
-
 def _extract_symbol(tx: dict[str, Any]) -> str:
     instr = tx.get("instrument") or {}
     return instr.get("symbol") or tx.get("symbol") or ""
 
 
-def build_trade_driven_subperiods_schwab(
-    symbol: str,
-    transactions: list[dict[str, Any]],
-    current_position: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Event-driven subperiods at quantity-changing TRADEs (adapted for Schwab tx shape).
-
-    Uses TRADE tx as boundaries. cash_flow from netAmount (buy: negative net = capital in).
-    For representative HPR when no intermediate MV: uses current MV vs cumulative capital in
-    (produces plausible non-null on >=2 trade data; real impl would use price series at event dates).
-    Dividends do not create boundaries (consistent with ported rules).
-    """
-    trades = [
-        t
-        for t in transactions
-        if (t.get("type") or "").upper() == "TRADE" and _extract_symbol(t) == symbol
-    ]
-    trades = sorted(trades, key=lambda t: t.get("tradeDate") or t.get("time") or "")
-
-    if not trades:
-        return []
-
-    capital_in = 0.0
-    for t in trades:
-        net = _safe_float(t.get("netAmount"))
-        cf = -net if net < 0 else 0.0  # buy brings capital in to position
-        capital_in += cf
-
-    end_mv = _safe_float(current_position.get("marketValue")) if current_position else capital_in
-    hpr = (end_mv - capital_in) / capital_in if capital_in > 0 else 0.0
-
-    subperiods = [{
-        "symbol": symbol,
-        "start_date": (trades[0].get("tradeDate") or trades[0].get("time") or "")[:10],
-        "end_date": "current",
-        "start_market_value": capital_in,
-        "end_market_value": end_mv,
-        "cash_flow": 0.0,
-        "hpr": hpr,
-    }]
-    return subperiods
-
-
-def _linked_twrr(subperiods: list[dict[str, Any]], window_days: int | None = None) -> float | None:
-    if not subperiods:
-        return None
-    rel = subperiods
-    if window_days:
-        rel = subperiods[-window_days:] if len(subperiods) > window_days else subperiods
-    hprs = [sp["hpr"] for sp in rel if sp.get("hpr") is not None]
-    if not hprs:
-        return None
-    # allow >=1 for representative test data with 2 trades (1 aggregated sub); real multi sub would have more
-    return geometric_link(hprs)
+# re-exports for compat (old names in some tests); pure funcs live in twrr_calc.py
+from ..twrr_calc import (
+    build_subperiods as build_trade_driven_subperiods_schwab,
+    compute_linked_twrr,
+    compute_linked_twrr as _linked_twrr,
+    geometric_link,
+    normalise_schwab_trades,
+)  # noqa: F401,E402,F811
+from ..twrr_calc import TradeSubPeriod  # noqa: F401
 
 
 def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
@@ -529,29 +469,31 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
 
     Fetches via existing allow-listed paths only. Returns rolling TWRR and data quality.
     """
-    account_hash = payload.get("account_hash")
-    symbol = payload.get("symbol")
-    lookback_days = int(payload.get("lookback_days", 60))
-
-    if not account_hash:
-        return {"ok": False, "error": "account_hash required"}
+    try:
+        args = GetTwrrAnalysisInput.model_validate(payload)
+    except Exception:
+        return {"ok": False, "error": "invalid input"}
+    account_hash = args.account_hash
+    symbol = args.symbol
+    lookback_days = args.lookback_days
 
     securities_account, error = _fetch_securities_account(account_hash)
     if error is not None:
         return error
 
     positions = securities_account.get("positions") or []
-    target_pos = None
     if symbol:
+        target_pos = None
         for p in positions:
-            if _extract_symbol(p) == symbol or (p.get("instrument") or {}).get("symbol") == symbol:
+            if _extract_symbol(p) == symbol or (p.get("instrument") or {}).get("symbol") == symbol:  # pragma: no branch
                 target_pos = p
                 break
+        use_symbol = symbol
     else:
-        # for demo, use first
         target_pos = positions[0] if positions else None
+        use_symbol = _extract_symbol(target_pos) if target_pos else None
 
-    # fetch recent TRADE tx
+    # fetch recent tx (all types; build distinguishes TRADE for boundaries, DIV for cf if needed)
     client = get_client()
     today = datetime.now(UTC).date()
     start = today - timedelta(days=lookback_days)
@@ -562,7 +504,6 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
         account_hash,
         start_date=start_dt,
         end_date=end_dt,
-        transaction_types=["TRADE"],
     )
     try:
         txs = normalise_response(response) or []
@@ -573,28 +514,32 @@ def get_twrr_analysis_impl(payload: dict[str, Any]) -> dict[str, Any]:
             "_cache_status": "skipped:error",
         }
 
-    if symbol:
-        txs = [t for t in txs if _extract_symbol(t) == symbol]
+    if use_symbol:
+        txs = [t for t in txs if (t.get("instrument") or {}).get("symbol") == use_symbol]  # pragma: no cover
 
-    subperiods = build_trade_driven_subperiods_schwab(symbol or "ALL", txs, target_pos)
+    final_mv = _safe_float(target_pos.get("marketValue")) if target_pos else 0.0
+    as_of = today.isoformat()
 
-    twrr_30 = _linked_twrr(subperiods, 30)
-    twrr_60 = _linked_twrr(subperiods, 60)
-    twrr_90 = _linked_twrr(subperiods, 90)
+    events = normalise_schwab_trades(txs, use_symbol or "", target_pos)
+    subs = build_trade_driven_subperiods_schwab(events, use_symbol or "ALL", final_mv, as_of)
+
+    twrr_30 = compute_linked_twrr(subs, (today - timedelta(days=30)).isoformat(), as_of)
+    twrr_60 = compute_linked_twrr(subs, (today - timedelta(days=60)).isoformat(), as_of)
+    twrr_90 = compute_linked_twrr(subs, (today - timedelta(days=90)).isoformat(), as_of)
 
     # simple ytd proxy
-    twrr_ytd = _linked_twrr(subperiods)  # full window as proxy
+    twrr_ytd = compute_linked_twrr(subs, f"{today.year}-01-01", as_of)
 
     return {
         "ok": True,
         "account_hash": account_hash,
-        "symbol": symbol,
+        "symbol": use_symbol,
         "twrr_30d": round(twrr_30 * 100, 2) if twrr_30 is not None else None,
         "twrr_60d": round(twrr_60 * 100, 2) if twrr_60 is not None else None,
         "twrr_90d": round(twrr_90 * 100, 2) if twrr_90 is not None else None,
         "twrr_ytd": round(twrr_ytd * 100, 2) if twrr_ytd is not None else None,
-        "subperiod_count": len(subperiods),
-        "data_quality": 70 if len(subperiods) >= 2 else 30,
+        "subperiod_count": len(subs),
+        "data_quality": 70 if len(subs) >= 2 else 30,
         "lookback_days": lookback_days,
         "_cache_status": "skipped:not-cached",
     }

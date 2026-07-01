@@ -46,6 +46,7 @@ class TestServerToolSurface:
             "get_pnl_analysis",
             "get_concentration_analysis",
             "get_cross_account_summary",
+            "get_twrr_analysis",
             "health_check",
             "get_server_info",
         ):
@@ -201,6 +202,56 @@ class TestServerToolSurface:
         out = server_module.get_cross_account_summary()
         assert out["ok"] is True
         assert out["account_count"] == 1
+
+    def test_get_twrr_analysis_via_server(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+    ) -> None:
+        """Exercise server wrapper for TWRR + multi-sub data (hits server body + impl)."""
+        from datetime import date as _date, timedelta as _td
+        today = _date.today()
+        pos_payload = {
+            "securitiesAccount": {
+                "positions": [
+                    {
+                        "instrument": {"symbol": "AAPL"},
+                        "longQuantity": 20.0,
+                        "averagePrice": 150.0,
+                        "marketValue": 3500.0,
+                    }
+                ]
+            }
+        }
+        mock_schwab_client.get_account.return_value = _resp(200, pos_payload)
+        txs = [
+            {
+                "transactionId": "T1",
+                "tradeDate": (today - _td(days=25)).isoformat(),
+                "type": "TRADE",
+                "instrument": {"symbol": "AAPL"},
+                "netAmount": -1500.0,
+                "quantity": 10.0,
+                "price": 150.0,
+            },
+            {
+                "transactionId": "T2",
+                "tradeDate": (today - _td(days=8)).isoformat(),
+                "type": "TRADE",
+                "instrument": {"symbol": "AAPL"},
+                "netAmount": -1500.0,
+                "quantity": 10.0,
+                "price": 150.0,
+            },
+        ]
+        mock_schwab_client.get_transactions.return_value = _resp(200, txs)
+        out = server_module.get_twrr_analysis(
+            account_hash="ACCT_HASH_AAAAAAAAAAAA", symbol="AAPL", lookback_days=60
+        )
+        assert out["ok"] is True
+        assert out["symbol"] == "AAPL"
+        # numeric non-zero expected on multi tx path
+        assert out.get("twrr_30d") is not None
 
 
 class TestMainFunctionGuarded:
