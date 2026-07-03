@@ -237,3 +237,7 @@ logs/
 # CRITICAL: keep uv.lock in repository (reverse rule, avoid being swallowed
 # by any earlier *.lock glob; we use precise token.json.lock above instead).
 !uv.lock
+
+# Git worktrees (feature branch isolation). See docs and using-git-worktrees skill.
+# Do not commit worktree contents; they live in separate checkouts.
+.worktrees/
