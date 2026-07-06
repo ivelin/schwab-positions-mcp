@@ -185,12 +185,12 @@ class TestGetAccountPositions:
 
 class TestGetOrdersHistory:
     def _payload(self, **kw: Any) -> dict[str, Any]:
-        # Use recent dates inside the 60-day lookback window.
-        now = datetime.now(UTC)
+        # Use recent dates so we stay inside any lookback windows.
+        today = datetime.now(UTC)
         base: dict[str, Any] = {
             "account_hash": VALID_HASH,
-            "from_entered_time": now - timedelta(days=30),
-            "to_entered_time": now - timedelta(days=5),
+            "from_entered_time": today - timedelta(days=20),
+            "to_entered_time": today - timedelta(days=5),
         }
         base.update(kw)
         return base
@@ -286,6 +286,30 @@ class TestGetTransactions:
         mock_transactions_data: list[dict[str, Any]],
     ) -> None:
         mock_schwab_client.get_transactions.return_value = _resp(200, mock_transactions_data)
+        out = transactions.get_transactions_impl(self._payload())
+        assert out["ok"] is True
+        assert out["count"] == 2
+
+    def test_returns_transactions_from_dict_wrapper(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+        mock_transactions_data: list[dict[str, Any]],
+    ) -> None:
+        # Some Schwab responses come wrapped; _coerce_to_list must handle it.
+        mock_schwab_client.get_transactions.return_value = _resp(200, {"transactions": mock_transactions_data})
+        out = transactions.get_transactions_impl(self._payload())
+        assert out["ok"] is True
+        assert out["count"] == 2
+        assert out["transactions"] == mock_transactions_data
+
+    def test_returns_transactions_from_items_wrapper(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+        mock_transactions_data: list[dict[str, Any]],
+    ) -> None:
+        mock_schwab_client.get_transactions.return_value = _resp(200, {"items": mock_transactions_data})
         out = transactions.get_transactions_impl(self._payload())
         assert out["ok"] is True
         assert out["count"] == 2

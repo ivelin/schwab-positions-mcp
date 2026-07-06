@@ -158,5 +158,19 @@ def normalise_response(response: Any) -> Any:
     raise SchwabApiError(status, f"unexpected_{status}", request_id)
 
 
+def _coerce_to_list(data: Any) -> list[Any]:
+    """Safely turn a possible list or dict-wrapped list into a Python list.
+
+    Schwab list responses (transactions, etc.) sometimes arrive as a bare list
+    and sometimes as a dict like {"transactions": [...]} or {"items": [...]}
+    after normalise_response(). This helper centralises the defensive coercion.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("transactions") or data.get("items") or []
+    return []
+
+
 def server_version() -> str:
     return __version__

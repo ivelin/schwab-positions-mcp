@@ -108,6 +108,23 @@ class TestGetPnlAnalysis:
         assert port["realized_trade_count"] == 1
         assert port["realized_pl_available"] is True
 
+    def test_realized_pl_from_dict_wrapped_transactions(
+        self,
+        installed_client: Any,
+        mock_schwab_client: MagicMock,
+    ) -> None:
+        # Verify _coerce_to_list handles dict responses for realized P&L path.
+        mock_schwab_client.get_account.return_value = _resp(200, _positions_payload(_TWO_POSITIONS))
+        mock_schwab_client.get_transactions.return_value = _resp(
+            200,
+            {"transactions": [{"type": "TRADE", "netAmount": 750.0}]},
+        )
+        out = analytics.get_pnl_analysis_impl({"account_hash": VALID_HASH})
+        port = out["portfolio"]
+        assert port["realized_pl"] == pytest.approx(750.0)
+        assert port["realized_trade_count"] == 1
+        assert port["realized_pl_available"] is True
+
     def test_realized_pl_unavailable_on_txn_error(
         self,
         installed_client: Any,

@@ -140,12 +140,11 @@ class TestB1EnforceEnumsDisabled:
     ) -> None:
         """``status="FILLED"`` must reach ``get_orders_for_account`` as a string."""
         mock_schwab_client.get_orders_for_account.return_value = _resp(200, mock_orders_data)
-        today = datetime.now(UTC)
         out = orders.get_orders_history_impl(
             {
                 "account_hash": VALID_HASH,
-                "from_entered_time": today - timedelta(days=30),
-                "to_entered_time": today - timedelta(days=5),
+                "from_entered_time": datetime.now(UTC) - timedelta(days=20),
+                "to_entered_time": datetime.now(UTC) - timedelta(days=5),
                 "status": "FILLED",
             }
         )
@@ -161,12 +160,11 @@ class TestB1EnforceEnumsDisabled:
     ) -> None:
         """``types=["TRADE"]`` must reach ``get_transactions`` as a list of strings."""
         mock_schwab_client.get_transactions.return_value = _resp(200, mock_transactions_data)
-        today = date.today()
         out = transactions.get_transactions_impl(
             {
                 "account_hash": VALID_HASH,
-                "start_date": today - timedelta(days=30),
-                "end_date": today - timedelta(days=5),
+                "start_date": date.today() - timedelta(days=30),
+                "end_date": date.today() - timedelta(days=5),
                 "types": ["TRADE"],
             }
         )

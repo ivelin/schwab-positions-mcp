@@ -7,7 +7,7 @@ from typing import Any
 
 from ..cache import get_cache
 from ..models import GetTransactionsInput
-from ._common import SchwabApiError, get_client, normalise_response
+from ._common import SchwabApiError, _coerce_to_list, get_client, normalise_response
 
 
 def get_transactions_impl(payload: dict[str, Any]) -> dict[str, Any]:
@@ -37,7 +37,7 @@ def get_transactions_impl(payload: dict[str, Any]) -> dict[str, Any]:
             "_cache_status": "skipped:error",
         }
 
-    transactions = data if isinstance(data, list) else []
+    transactions = _coerce_to_list(data)
 
     cache_status = "skipped:disabled"
     cache = get_cache()

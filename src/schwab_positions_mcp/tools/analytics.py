@@ -41,7 +41,7 @@ from ..models import (
     GetConcentrationAnalysisInput,
     GetPnlAnalysisInput,
 )
-from ._common import SchwabApiError, get_client, normalise_response
+from ._common import SchwabApiError, _coerce_to_list, get_client, normalise_response
 
 
 def _safe_float(value: Any) -> float:
@@ -207,7 +207,7 @@ def _derive_realized_pl(account_hash: str, lookback_days: int) -> dict[str, Any]
     except SchwabApiError:
         return {"realized_pl": None, "realized_trade_count": 0, "available": False}
 
-    transactions = data if isinstance(data, list) else []
+    transactions = _coerce_to_list(data)
     realized_proceeds = 0.0
     trade_count = 0
     for txn in transactions:

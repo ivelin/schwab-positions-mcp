@@ -9,7 +9,6 @@ keep out of CI.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -91,13 +90,10 @@ class TestServerToolSurface:
         mock_orders_data: list[dict[str, Any]],
     ) -> None:
         mock_schwab_client.get_orders_for_account.return_value = _resp(200, mock_orders_data)
-        today = datetime.now(UTC)
-        from_t = (today - timedelta(days=30)).isoformat()
-        to_t = (today - timedelta(days=5)).isoformat()
         out = server_module.get_orders_history(
             account_hash="ACCT_HASH_AAAAAAAAAAAA",
-            from_entered_time=from_t,
-            to_entered_time=to_t,
+            from_entered_time="2026-06-10T00:00:00+00:00",
+            to_entered_time="2026-06-20T00:00:00+00:00",
         )
         assert out["ok"] is True
         assert out["count"] == 2
@@ -109,11 +105,10 @@ class TestServerToolSurface:
         mock_transactions_data: list[dict[str, Any]],
     ) -> None:
         mock_schwab_client.get_transactions.return_value = _resp(200, mock_transactions_data)
-        today = date.today()
         out = server_module.get_transactions(
             account_hash="ACCT_HASH_AAAAAAAAAAAA",
-            start_date=(today - timedelta(days=30)).isoformat(),
-            end_date=(today - timedelta(days=5)).isoformat(),
+            start_date="2026-06-10",
+            end_date="2026-06-20",
         )
         assert out["ok"] is True
         assert out["count"] == 2

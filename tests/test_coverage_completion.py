@@ -316,6 +316,25 @@ class TestServerWrappers:
             srv.mcp.settings.host = orig_host
             srv.mcp.settings.port = orig_port
 
+    def test_main_uses_sys_argv_when_called_with_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main() / main(None) falls back to sys.argv[1:] to cover the default branch."""
+        import schwab_positions_mcp.server as srv
+
+        run_calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(srv.mcp, "run", lambda **kwargs: run_calls.append(kwargs))
+
+        monkeypatch.setattr("sys.argv", ["prog", "--http", "--port", "12345"])
+
+        orig_host = srv.mcp.settings.host
+        orig_port = srv.mcp.settings.port
+        try:
+            srv.main()  # default=None triggers argv = sys.argv[1:]
+            assert run_calls == [{"transport": "streamable-http"}]
+            assert srv.mcp.settings.port == 12345
+        finally:
+            srv.mcp.settings.host = orig_host
+            srv.mcp.settings.port = orig_port
+
 
 # ===========================================================================
 # tools._common — get_client lazy build + normalise_response no-headers branch

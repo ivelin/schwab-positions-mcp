@@ -83,12 +83,10 @@ class TestGetAccountPositionsInput:
 
 class TestGetOrdersHistoryInput:
     def _payload(self, **overrides: object) -> dict[str, object]:
-        # Recent dates inside 60-day lookback.
-        now = datetime.now(UTC)
         base: dict[str, object] = {
             "account_hash": VALID_HASH,
-            "from_entered_time": now - timedelta(days=30),
-            "to_entered_time": now - timedelta(days=5),
+            "from_entered_time": datetime.now(UTC) - timedelta(days=20),
+            "to_entered_time": datetime.now(UTC) - timedelta(days=5),
         }
         base.update(overrides)
         return base
@@ -124,9 +122,10 @@ class TestGetOrdersHistoryInput:
             GetOrdersHistoryInput.model_validate(self._payload(max_results=3001))
 
     def test_naive_datetime_rejected(self) -> None:
+        # naive (no tzinfo) must be rejected by the model
         with pytest.raises(ValidationError):
             GetOrdersHistoryInput.model_validate(
-                self._payload(from_entered_time=datetime(2026, 5, 1)),
+                self._payload(from_entered_time=datetime(2026, 6, 1)),
             )
 
     def test_status_optional(self) -> None:
@@ -141,7 +140,7 @@ class TestGetOrdersHistoryInput:
 
 class TestGetTransactionsInput:
     def _payload(self, **overrides: object) -> dict[str, object]:
-        # Recent dates to satisfy 60-day lookback validation.
+        # recent dates inside 60-day lookback window
         today = date.today()
         base: dict[str, object] = {
             "account_hash": VALID_HASH,
@@ -165,10 +164,9 @@ class TestGetTransactionsInput:
             GetTransactionsInput.model_validate(self._payload(types=["NOT_REAL"]))
 
     def test_end_before_start_rejected(self) -> None:
-        today = date.today()
         with pytest.raises(ValidationError):
             GetTransactionsInput.model_validate(
-                self._payload(start_date=today - timedelta(days=5), end_date=today - timedelta(days=30)),
+                self._payload(start_date=date.today() - timedelta(days=5), end_date=date.today() - timedelta(days=30)),
             )
 
     def test_symbol_too_long_rejected(self) -> None:
